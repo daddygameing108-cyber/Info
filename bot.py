@@ -1,24 +1,82 @@
 import logging
+import sqlite3
+import os
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 
-# Logging setup
-logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
+# Logging Configuration
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO
+)
 logger = logging.getLogger(__name__)
 
-# Aapki Admin Telegram ID
-ADMIN_ID = 5116589075 
+# Credentials (Render Environment Variables ya fallback)
+TOKEN = os.getenv("BOT_TOKEN", "8681941726:AAFll1hp4rZtCHRL_4t-gpgn_frGSZzif5c")
+ADMIN_ID = int(os.getenv("ADMIN_ID", "5116589075"))
 
-# In-memory Database
-users_db = {}  # {user_id: {"username": str, "gmail": str, "pass": str, "upi": str, "balance": float, "history": []}}
-pending_redeems = [] 
+# --- DATABASE SETUP (SQLite) ---
+def init_db():
+    conn = sqlite3.connect("bot_database.db")
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            user_id INTEGER PRIMARY KEY,
+            username TEXT,
+            gmail TEXT,
+            password TEXT,
+            upi TEXT,
+            balance REAL DEFAULT 0.0,
+            history TEXT DEFAULT 'Account Created Successfully'
+        )
+    """)
+    conn.commit()
+    conn.close()
 
-TOKEN = "8681941726:AAFll1hp4rZtCHRL_4t-gpgn_frGSZzif5c"
+init_db()
 
-# --- START & REGISTRATION ---
+def get_user(user_id):
+    conn = sqlite3.connect("bot_database.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT username, gmail, password, upi, balance, history FROM users WHERE user_id = ?", (user_id,))
+    row = cursor.fetchone()
+    conn.close()
+    if row:
+        return {
+            "username": row[0],
+            "gmail": row[1],
+            "pass": row[2],
+            "upi": row[3],
+            "balance": row[4],
+            "history": row[5].split("|||") if row[5] else []
+        }
+    return None
+
+def save_user(user_id, username, gmail, password, upi, balance=0.0, history=None):
+    if history is None:
+        history = ["Account Created Successfully"]
+    history_str = "|||".join(history)
+    conn = sqlite3.connect("bot_database.db")
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT OR REPLACE INTO users (user_id, username, gmail, password, upi, balance, history)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, (user_id, username, gmail, password, upi, balance, history_str))
+    conn.commit()
+    conn.close()
+
+def update_user_field(user_id, field, value):
+    conn = sqlite3.connect("bot_database.db")
+    cursor = conn.cursor()
+    cursor.execute(f"UPDATE users SET {field} = ? WHERE user_id = ?", (value, user_id))
+    conn.commit()
+    conn.close()
+
+# --- HANDLERS ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    if user_id in users_db:
+    user = get_user(user_id)
+    if user:
         await show_main_menu(update, context)
     else:
         await update.message.reply_text(
@@ -28,7 +86,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    username = update.effective_user.username or "No Username"
+    username = update.effective_user.username or "No_Username"
     text = update.message.text
     state = context.user_data.get('state')
 
@@ -47,21 +105,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         gmail = context.user_data.get('gmail')
         password = context.user_data.get('pass')
         
-        # User account create karein
-        users_db[user_id] = {
-            "username": username,
-            "gmail": gmail,
-            "pass": password,
-            "upi": upi,
-            "balance": 0.0,
-            "history": ["Account Created Successfully"]
-        }
+        # Save to Database
+        save_user(user_id, username, gmail, password, upi)
         context.user_data['state'] = None
         
         await update.message.reply_text("✅ **Registration Successful!**")
         await show_main_menu(update, context)
         
-        # Admin ko naye user ki profile ki notification bhejna
+        # Notify Admin
         try:
             await context.bot.send_message(
                 chat_id=ADMIN_ID,
@@ -76,31 +127,33 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="Markdown"
             )
         except Exception as e:
-            logger.error(f"Admin ko user details bhejne mein error: {e}")
+            logger.error(f"Failed to notify admin: {e}")
         
     elif user_id == ADMIN_ID and text.startswith("/addrs"):
-        # Format: /addrs userid amount
         try:
             parts = text.split()
             target_user = int(parts[1])
             amount = float(parts[2])
-            if target_user in users_db:
-                users_db[target_user]["balance"] += amount
-                users_db[target_user]["history"].append(f"Added Rs.{amount} by Admin")
-                await update.message.reply_text(f"✅ Successfully added Rs.{amount} to user {target_user}")
+            user = get_user(target_user)
+            if user:
+                new_balance = user["balance"] + amount
+                user["history"].append(f"Added Rs.{amount} by Admin")
+                save_user(target_user, user["username"], user["gmail"], user["pass"], user["upi"], new_balance, user["history"])
                 
-                # User ko bhi notify karein ki balance add ho gaya hai
+                await update.message.reply_text(f"✅ Successfully added Rs.{amount} to user `{target_user}`", parse_mode="Markdown")
+                
                 try:
                     await context.bot.send_message(
                         chat_id=target_user,
-                        text=f"🎉 Aapke account mein Admin dwara **Rs.{amount}** add kar diye gaye hain!"
+                        text=f"🎉 Aapke account mein Admin dwara **Rs.{amount}** add kar diye gaye hain!",
+                        parse_mode="Markdown"
                     )
-                except:
+                except Exception:
                     pass
             else:
                 await update.message.reply_text("❌ User ID database mein nahi mili.")
         except Exception:
-            await update.message.reply_text("❌ Galat format! Use karein: `/addrs <user_id> <amount>`")
+            await update.message.reply_text("❌ Galat format! Use karein: `/addrs <user_id> <amount>`", parse_mode="Markdown")
 
 async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
@@ -111,23 +164,22 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     if update.callback_query:
-        await update.callback_query.message.edit_text("📌 **Main Menu:**", reply_markup=reply_markup)
+        await update.callback_query.message.edit_text("📌 **Main Menu:**", reply_markup=reply_markup, parse_mode="Markdown")
     else:
-        await update.message.reply_text("📌 **Main Menu:**", reply_markup=reply_markup)
+        await update.message.reply_text("📌 **Main Menu:**", reply_markup=reply_markup, parse_mode="Markdown")
 
-# --- CALLBACK HANDLERS ---
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
     data = query.data
+    user = get_user(user_id)
+
+    if not user and data != "back_home":
+        await query.message.reply_text("Pehle /start karein.")
+        return
 
     if data == "profile":
-        user = users_db.get(user_id)
-        if not user:
-            await query.message.reply_text("Pehle /start karein.")
-            return
-        
         profile_text = (
             f"👤 **Your Profile**\n\n"
             f"📧 Gmail: `{user['gmail']}`\n"
@@ -138,26 +190,20 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.edit_text(profile_text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif data == "history":
-        user = users_db.get(user_id)
         history_list = "\n".join([f"• {item}" for item in user['history']]) if user['history'] else "No history yet."
         history_text = f"📋 **Task & Activity History:**\n\n{history_list}"
         keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="back_home")]]
-        await query.message.edit_text(history_text, reply_markup=InlineKeyboardMarkup(keyboard))
+        await query.message.edit_text(history_text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif data == "redeem":
-        user = users_db.get(user_id)
         if user['balance'] <= 0:
             await query.answer("❌ Aapka balance 0 hai, redeem nahi lag sakta!", show_alert=True)
             return
         
         amount = user['balance']
-        pending_redeems.append({"user_id": user_id, "amount": amount, "upi": user['upi'], "gmail": user['gmail']})
-        
-        # Balance zero karein aur history update karein
-        user['balance'] = 0.0
         user['history'].append(f"Redeem requested for Rs.{amount}")
+        save_user(user_id, user['username'], user['gmail'], user['pass'], user['upi'], 0.0, user['history'])
         
-        # Admin ko redeem request notify karein
         try:
             await context.bot.send_message(
                 chat_id=ADMIN_ID,
@@ -172,7 +218,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="Markdown"
             )
         except Exception as e:
-            logger.error(f"Admin ko redeem message bhejne mein error: {e}")
+            logger.error(f"Failed to send redeem alert: {e}")
 
         await query.answer("✅ Aapka redeem request admin ke paas bhej diya gaya hai!", show_alert=True)
         await show_main_menu(update, context)
@@ -180,7 +226,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "back_home":
         await show_main_menu(update, context)
 
-# --- MAIN FUNCTION ---
 def main():
     application = Application.builder().token(TOKEN).build()
 
@@ -188,9 +233,9 @@ def main():
     application.add_handler(CallbackQueryHandler(button_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    print("🤖 Bot started successfully...")
+    logger.info("🤖 Professional Bot started successfully...")
     application.run_polling()
 
 if __name__ == "__main__":
     main()
-                  
+    
