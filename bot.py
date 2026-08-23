@@ -76,10 +76,52 @@ def save_user(user_id, username, fullname, mobile, gmail, password, upi, balance
     conn.commit()
     conn.close()
 
+# --- ADMIN COMMAND HANDLER (Separate to fix balance adding) ---
+async def admin_add_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        return
+    
+    text = update.message.text
+    try:
+        parts = text.split()
+        if len(parts) < 3:
+            await update.message.reply_text("❌ Format: `/addrs <user_id> <amount> <App_Name>`", parse_mode="Markdown")
+            return
+        
+        target_user = int(parts[1])
+        amount = float(parts[2])
+        app_name = " ".join(parts[3:]) if len(parts) > 3 else "Wallet App"
+        
+        user = get_user(target_user)
+        if user:
+            new_balance = user["balance"] + amount
+            curr_date = datetime.now().strftime("%d/%m/%y %H:%M")
+            
+            history_entry = f"From: {app_name} (+Rs.{amount}) on {curr_date}"
+            user["history"].append(history_entry)
+            
+            save_user(target_user, user["username"], user["fullname"], user["mobile"], user["gmail"], user["pass"], user["upi"], new_balance, user["history"])
+            
+            await update.message.reply_text(f"✅ Added Rs.{amount} from **{app_name}** to user `{target_user}`", parse_mode="Markdown")
+            
+            try:
+                await context.bot.send_message(
+                    chat_id=target_user,
+                    text=f"🎉 **Payment Received!**\n\n📱 **App Name:** {app_name}\n💰 **Amount:** Rs.{amount}\n📅 **Date:** {curr_date}\n\nAapke wallet mein credit kar diye gaye hain!"
+                )
+            except Exception as e:
+                logger.error(f"User notify error: {e}")
+        else:
+            await update.message.reply_text("❌ User ID database mein nahi mili.")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error: {e}\nSahi format: `/addrs <user_id> <amount> <App_Name>`", parse_mode="Markdown")
+
 # --- TELEGRAM BOT HANDLERS ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     user = get_user(user_id)
+    context.user_data['state'] = None
     if user:
         await show_main_menu(update, context)
     else:
@@ -151,9 +193,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if user['balance'] < amount:
                 await update.message.reply_text(f"❌ Aapka balance kam hai! Aapka current balance Rs.{user['balance']} hai.\n\nDobara amount bhejein ya cancel karne ke liye /start dabayein:")
                 return
-            if amount < 50:
-                await update.message.reply_text("❌ Minimum withdrawal amount ₹50 hai. Dobara amount bhejein:")
-                return
             
             context.user_data['withdraw_amount'] = amount
             context.user_data['state'] = 'WAITING_WITHDRAW_UPI'
@@ -161,7 +200,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except ValueError:
             await update.message.reply_text("❌ Kripya sirf sahi amount (number) me bhejein (jaise: 100):")
 
-    # Withdrawal: UPI Input State
+    # Withdrawal: UPI Input State & Final Processing
     elif state == 'WAITING_WITHDRAW_UPI':
         upi_id = text
         amount = context.user_data.get('withdraw_amount')
@@ -173,7 +212,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         save_user(user_id, user['username'], user['fullname'], user['mobile'], user['gmail'], user['pass'], user['upi'], new_balance, user['history'])
         
         context.user_data['state'] = None
-        await update.message.reply_text("✅ **Withdrawal Request Submitted Successfully!**\nJaldi hi aapke account me bhej diye jayenge.")
+        await update.message.reply_text("✅ **Withdrawal Request Submitted Successfully!**\nJaldi hi aapke account mein bhej diye jayenge.")
         
         try:
             await context.bot.send_message(
@@ -198,43 +237,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except:
             pass
         await show_main_menu(update, context)
-
-    # Admin Balance Add Command with App Name & Date/Time (Safe Parsing)
-    elif user_id == ADMIN_ID and text.startswith("/addrs"):
-        try:
-            parts = text.split()
-            if len(parts) < 3:
-                await update.message.reply_text("❌ Format: `/addrs <user_id> <amount> <App_Name>`", parse_mode="Markdown")
-                return
-            
-            target_user = int(parts[1])
-            amount = float(parts[2])
-            # Baaki ka sara text App Name mana jayega (spaces ke sath)
-            app_name = " ".join(parts[3:]) if len(parts) > 3 else "TaskReward"
-            
-            user = get_user(target_user)
-            if user:
-                new_balance = user["balance"] + amount
-                curr_date = datetime.now().strftime("%d/%m/%y %H:%M")
-                
-                history_entry = f"From: {app_name} (+Rs.{amount}) on {curr_date}"
-                user["history"].append(history_entry)
-                
-                save_user(target_user, user["username"], user["fullname"], user["mobile"], user["gmail"], user["pass"], user["upi"], new_balance, user["history"])
-                
-                await update.message.reply_text(f"✅ Added Rs.{amount} from **{app_name}** to user `{target_user}`", parse_mode="Markdown")
-                
-                try:
-                    await context.bot.send_message(
-                        chat_id=target_user,
-                        text=f"🎉 **Payment Received!**\n\n📱 **App Name:** {app_name}\n💰 **Amount:** Rs.{amount}\n📅 **Date:** {curr_date}\n\nAapke wallet mein credit kar diye gaye hain!"
-                    )
-                except Exception as e:
-                    logger.error(f"User notify error: {e}")
-            else:
-                await update.message.reply_text("❌ User ID database mein nahi mili.")
-        except Exception as e:
-            await update.message.reply_text(f"❌ Error: {e}\nSahi format: `/addrs <user_id> <amount> <App_Name>`", parse_mode="Markdown")
 
 async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id if not update.callback_query else update.callback_query.from_user.id
@@ -276,11 +278,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await show_main_menu(update, context)
 
     elif data == "withdraw":
-        if user['balance'] < 50:
-            kb = [[InlineKeyboardButton("🔙 Back", callback_data="back_home")]]
-            await query.message.edit_text("❌ **Minimum withdrawal amount is ₹50!**\nAapka current balance kam hai.", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
-            return
-        
         context.user_data['state'] = 'WAITING_WITHDRAW_AMOUNT'
         kb = [[InlineKeyboardButton("🔙 Back", callback_data="back_home")]]
         await query.message.edit_text("📥 **Withdraw Fund**\n\nKripya apna withdrawal **Amount** enter karein (e.g., 100):", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
@@ -344,6 +341,7 @@ telegram_app = Application.builder().token(TOKEN).build()
 
 telegram_app.add_handler(CommandHandler("start", start))
 telegram_app.add_handler(CommandHandler("admin", admin_panel))
+telegram_app.add_handler(CommandHandler("addrs", admin_add_balance)) # Dedicated command handler
 telegram_app.add_handler(CallbackQueryHandler(button_handler))
 telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
@@ -374,4 +372,4 @@ if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 10000))
     uvicorn.run("bot:app", host="0.0.0.0", port=port)
-    
+        
