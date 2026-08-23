@@ -13,9 +13,8 @@ logger = logging.getLogger(__name__)
 TOKEN = "8681941726:AAFll1hp4rZtCHRL_4t-gpgn_frGSZzif5c"
 ADMIN_ID = 5116589075
 
-# Render par aapko apni Web Service ka URL milta hai (jaise: https://your-app-name.onrender.com)
 PORT = int(os.environ.get("PORT", 10000))
-RENDER_EXTERNAL_URL = os.environ.get("RENDER_EXTERNAL_URL")  # Render khud ye variable deta hai
+RENDER_EXTERNAL_URL = "https://info-eh9b.onrender.com"  # <--- Aapka exact Render URL
 
 # --- DATABASE SETUP ---
 def init_db():
