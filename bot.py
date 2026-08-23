@@ -199,20 +199,24 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
         await show_main_menu(update, context)
 
-    # Admin Balance Add Command with App Name & Date/Time
+    # Admin Balance Add Command with App Name & Date/Time (Safe Parsing)
     elif user_id == ADMIN_ID and text.startswith("/addrs"):
         try:
-            parts = text.split(maxsplit=3)
+            parts = text.split()
+            if len(parts) < 3:
+                await update.message.reply_text("❌ Format: `/addrs <user_id> <amount> <App_Name>`", parse_mode="Markdown")
+                return
+            
             target_user = int(parts[1])
             amount = float(parts[2])
-            app_name = parts[3] if len(parts) > 3 else "Unknown App"
+            # Baaki ka sara text App Name mana jayega (spaces ke sath)
+            app_name = " ".join(parts[3:]) if len(parts) > 3 else "TaskReward"
             
             user = get_user(target_user)
             if user:
                 new_balance = user["balance"] + amount
                 curr_date = datetime.now().strftime("%d/%m/%y %H:%M")
                 
-                # History mein App Name aur Date save hogi
                 history_entry = f"From: {app_name} (+Rs.{amount}) on {curr_date}"
                 user["history"].append(history_entry)
                 
@@ -220,18 +224,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
                 await update.message.reply_text(f"✅ Added Rs.{amount} from **{app_name}** to user `{target_user}`", parse_mode="Markdown")
                 
-                # User ko notification mein App Name aur Date jayegi
                 try:
                     await context.bot.send_message(
                         chat_id=target_user,
                         text=f"🎉 **Payment Received!**\n\n📱 **App Name:** {app_name}\n💰 **Amount:** Rs.{amount}\n📅 **Date:** {curr_date}\n\nAapke wallet mein credit kar diye gaye hain!"
                     )
-                except:
-                    pass
+                except Exception as e:
+                    logger.error(f"User notify error: {e}")
             else:
-                await update.message.reply_text("❌ User ID nahi mili.")
+                await update.message.reply_text("❌ User ID database mein nahi mili.")
         except Exception as e:
-            await update.message.reply_text(f"❌ Format error!\nSahi format: `/addrs <user_id> <amount> <App_Name>`\nError: {e}", parse_mode="Markdown")
+            await update.message.reply_text(f"❌ Error: {e}\nSahi format: `/addrs <user_id> <amount> <App_Name>`", parse_mode="Markdown")
 
 async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id if not update.callback_query else update.callback_query.from_user.id
@@ -274,8 +277,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif data == "withdraw":
         if user['balance'] < 50:
-            await query.answer("❌ Minimum withdrawal amount is ₹50!", show_alert=True)
+            kb = [[InlineKeyboardButton("🔙 Back", callback_data="back_home")]]
+            await query.message.edit_text("❌ **Minimum withdrawal amount is ₹50!**\nAapka current balance kam hai.", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
             return
+        
         context.user_data['state'] = 'WAITING_WITHDRAW_AMOUNT'
         kb = [[InlineKeyboardButton("🔙 Back", callback_data="back_home")]]
         await query.message.edit_text("📥 **Withdraw Fund**\n\nKripya apna withdrawal **Amount** enter karein (e.g., 100):", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
