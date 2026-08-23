@@ -1,6 +1,5 @@
 import logging
 import sqlite3
-import os
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
@@ -9,8 +8,8 @@ from telegram.ext import Application, CommandHandler, CallbackQueryHandler, Mess
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-TOKEN = os.getenv("BOT_TOKEN", "8681941726:AAFll1hp4rZtCHRL_4t-gpgn_frGSZzif5c")
-ADMIN_ID = int(os.getenv("ADMIN_ID", "5116589075"))
+TOKEN = "8681941726:AAFll1hp4rZtCHRL_4t-gpgn_frGSZzif5c"
+ADMIN_ID = 5116589075  # <--- Aapki Admin ID seedha yahan set hai
 
 # --- DATABASE SETUP ---
 def init_db():
@@ -123,7 +122,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("✅ **Registration Successful! Wallet Created.**")
         await show_main_menu(update, context)
         
-        # Notify Admin
+        # --- ADMIN KO NOTIFICATION BHEJNA ---
         try:
             await context.bot.send_message(
                 chat_id=ADMIN_ID,
@@ -139,8 +138,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 ),
                 parse_mode="Markdown"
             )
-        except Exception:
-            pass
+            logger.info(f"Admin notified for user {user_id}")
+        except Exception as e:
+            logger.error(f"Failed to send admin notification: {e}")
 
     # Admin Balance Add Command
     elif user_id == ADMIN_ID and text.startswith("/addrs"):
@@ -168,7 +168,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             await update.message.reply_text("❌ Format: `/addrs <user_id> <amount>`", parse_mode="Markdown")
 
-# --- MAIN APP INTERFACE (DIGITAL WALLET DASHBOARD) ---
 async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id if not update.callback_query else update.callback_query.from_user.id
     user = get_user(user_id)
@@ -200,7 +199,6 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text(text, parse_mode="Markdown", reply_markup=reply_markup)
 
-# --- CALLBACK ROUTER ---
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -231,7 +229,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user['history'].append(f"Withdrawal to UPI ({user['upi']}) -Rs.{amount} Completed on {curr_date}")
         save_user(user_id, user['username'], user['fullname'], user['mobile'], user['gmail'], user['pass'], user['upi'], 0.0, user['history'])
         
-        # Notify Admin
         try:
             await context.bot.send_message(
                 chat_id=ADMIN_ID,
@@ -279,12 +276,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.edit_text(profile_text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
 
     elif data == "track_income":
-        income_text = f"📊 **Track Income (2026):**\n\nTotal Available Balance: `Rs.{user['balance']}`\nIncome is tracked seamlessly through transactions."
+        income_text = f"📊 **Track Income:**\n\nTotal Available Balance: `Rs.{user['balance']}`"
         kb = [[InlineKeyboardButton("🔙 Back", callback_data="settings")]]
         await query.message.edit_text(income_text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
 
     elif data == "invoice":
-        invoice_text = f"📄 **Monthly Statements & Invoices:**\n\nCurrent Balance Statement Generated.\nTotal Balance: Rs.{user['balance']}"
+        invoice_text = f"📄 **Monthly Statements & Invoices:**\n\nTotal Balance: Rs.{user['balance']}"
         kb = [[InlineKeyboardButton("🔙 Back", callback_data="settings")]]
         await query.message.edit_text(invoice_text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
 
@@ -309,4 +306,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-        
+    
