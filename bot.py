@@ -83,7 +83,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user:
         await show_main_menu(update, context)
     else:
-        await update.message.reply_text("👋 Welcome to **RW Wallet**!\n\nRegistration ke liye apni **Gmail ID** bhejein:")
+        await update.message.reply_text("👋 Welcome to **Digital Wallet**!\n\nRegistration ke liye apni **Gmail ID** bhejein:")
         context.user_data['state'] = 'WAITING_GMAIL'
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -92,6 +92,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     state = context.user_data.get('state')
 
+    # Registration States
     if state == 'WAITING_GMAIL':
         context.user_data['gmail'] = text
         context.user_data['state'] = 'WAITING_NAME'
@@ -136,36 +137,101 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"📱 Mobile: {mobile}\n"
                     f"📧 Gmail: {gmail}\n"
                     f"💳 UPI: {upi}\n\n"
-                    f"💡 Balance add karne ke liye: /addrs {user_id} <amount>"
+                    f"💡 Balance add karne ke liye: /addrs {user_id} <amount> <App_Name>"
                 )
             )
         except Exception as e:
             logger.error(f"Admin notify error: {e}")
 
+    # Withdrawal: Amount Input State
+    elif state == 'WAITING_WITHDRAW_AMOUNT':
+        try:
+            amount = float(text)
+            user = get_user(user_id)
+            if user['balance'] < amount:
+                await update.message.reply_text(f"❌ Aapka balance kam hai! Aapka current balance Rs.{user['balance']} hai.\n\nDobara amount bhejein ya cancel karne ke liye /start dabayein:")
+                return
+            if amount < 50:
+                await update.message.reply_text("❌ Minimum withdrawal amount ₹50 hai. Dobara amount bhejein:")
+                return
+            
+            context.user_data['withdraw_amount'] = amount
+            context.user_data['state'] = 'WAITING_WITHDRAW_UPI'
+            await update.message.reply_text("💳 Ab apni **UPI ID** bhejein jahan payment leni hai:")
+        except ValueError:
+            await update.message.reply_text("❌ Kripya sirf sahi amount (number) me bhejein (jaise: 100):")
+
+    # Withdrawal: UPI Input State
+    elif state == 'WAITING_WITHDRAW_UPI':
+        upi_id = text
+        amount = context.user_data.get('withdraw_amount')
+        user = get_user(user_id)
+        
+        new_balance = user['balance'] - amount
+        curr_date = datetime.now().strftime("%d/%m/%y %H:%M")
+        user['history'].append(f"Withdrawal to UPI ({upi_id}) -Rs.{amount} Completed on {curr_date}")
+        save_user(user_id, user['username'], user['fullname'], user['mobile'], user['gmail'], user['pass'], user['upi'], new_balance, user['history'])
+        
+        context.user_data['state'] = None
+        await update.message.reply_text("✅ **Withdrawal Request Submitted Successfully!**\nJaldi hi aapke account me bhej diye jayenge.")
+        
+        try:
+            await context.bot.send_message(
+                chat_id=ADMIN_ID,
+                text=f"🚨 New Withdrawal Request!\n\n👤 User ID: {user_id}\n💳 UPI: {upi_id}\n💰 Amount: Rs.{amount}"
+            )
+        except:
+            pass
+        await show_main_menu(update, context)
+
+    # Google Play Gift Card: Gmail Input State
+    elif state == 'WAITING_GC_GMAIL':
+        gc_gmail = text
+        context.user_data['state'] = None
+        await update.message.reply_text(f"✅ Google Play Gift Card request received for **{gc_gmail}**!\nKripya 24 hours ka wait karein, code aapki Gmail par bhej diya jayega.")
+        
+        try:
+            await context.bot.send_message(
+                chat_id=ADMIN_ID,
+                text=f"🎁 New Google Play Gift Card Request!\n\n👤 User ID: {user_id}\n📧 Gmail: {gc_gmail}"
+            )
+        except:
+            pass
+        await show_main_menu(update, context)
+
+    # Admin Balance Add Command with App Name & Date/Time
     elif user_id == ADMIN_ID and text.startswith("/addrs"):
         try:
-            parts = text.split()
+            parts = text.split(maxsplit=3)
             target_user = int(parts[1])
             amount = float(parts[2])
+            app_name = parts[3] if len(parts) > 3 else "Unknown App"
+            
             user = get_user(target_user)
             if user:
                 new_balance = user["balance"] + amount
                 curr_date = datetime.now().strftime("%d/%m/%y %H:%M")
-                user["history"].append(f"From: REVIEWS WORLD (+Rs.{amount}) on {curr_date}")
+                
+                # History mein App Name aur Date save hogi
+                history_entry = f"From: {app_name} (+Rs.{amount}) on {curr_date}"
+                user["history"].append(history_entry)
+                
                 save_user(target_user, user["username"], user["fullname"], user["mobile"], user["gmail"], user["pass"], user["upi"], new_balance, user["history"])
                 
-                await update.message.reply_text(f"✅ Added Rs.{amount} to user `{target_user}`", parse_mode="Markdown")
+                await update.message.reply_text(f"✅ Added Rs.{amount} from **{app_name}** to user `{target_user}`", parse_mode="Markdown")
+                
+                # User ko notification mein App Name aur Date jayegi
                 try:
                     await context.bot.send_message(
                         chat_id=target_user,
-                        text=f"🎉 Aapke wallet mein **Rs.{amount}** credit kar diye gaye hain!"
+                        text=f"🎉 **Payment Received!**\n\n📱 **App Name:** {app_name}\n💰 **Amount:** Rs.{amount}\n📅 **Date:** {curr_date}\n\nAapke wallet mein credit kar diye gaye hain!"
                     )
                 except:
                     pass
             else:
                 await update.message.reply_text("❌ User ID nahi mili.")
-        except Exception:
-            await update.message.reply_text("❌ Format: `/addrs <user_id> <amount>`", parse_mode="Markdown")
+        except Exception as e:
+            await update.message.reply_text(f"❌ Format error!\nSahi format: `/addrs <user_id> <amount> <App_Name>`\nError: {e}", parse_mode="Markdown")
 
 async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id if not update.callback_query else update.callback_query.from_user.id
@@ -173,7 +239,7 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     balance = user['balance'] if user else 0.0
 
     text = (
-        f"🌐 **Digital Wallet** | **REVIEWS WORLD**\n"
+        f"🌐 **Digital Wallet**\n"
         f"────────────────────────\n"
         f"💰 **Your Balance:** `Rs.{balance:.2f}`\n"
         f"💵 **USD:** `$0.00`\n"
@@ -184,10 +250,7 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [InlineKeyboardButton("📥 Withdraw Fund (0% tax)", callback_data="withdraw"),
          InlineKeyboardButton("🎁 Redeem Gift Card", callback_data="redeem_gc")],
-        [InlineKeyboardButton("👥 Pay to Wallet", callback_data="pay_wallet"),
-         InlineKeyboardButton("📱 Mobile Recharge", callback_data="recharge")],
-        [InlineKeyboardButton("🏦 Take Loan", callback_data="loan"),
-         InlineKeyboardButton("🤝 Become Partner", callback_data="partner")],
+        [InlineKeyboardButton("👥 Pay to Wallet", callback_data="pay_wallet")],
         [InlineKeyboardButton("📜 History", callback_data="history"),
          InlineKeyboardButton("⚙️ Settings / Profile", callback_data="settings")]
     ]
@@ -206,46 +269,24 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = get_user(user_id)
 
     if data == "back_home":
+        context.user_data['state'] = None
         await show_main_menu(update, context)
 
     elif data == "withdraw":
-        kb = [
-            [InlineKeyboardButton("UPI (Instant)", callback_data="w_upi"),
-             InlineKeyboardButton("Bank Transfer", callback_data="w_bank")],
-            [InlineKeyboardButton("Google Play", callback_data="w_gp"),
-             InlineKeyboardButton("Amazon / Flipkart", callback_data="w_amzn")],
-            [InlineKeyboardButton("🔙 Back", callback_data="back_home")]
-        ]
-        await query.message.edit_text("🏦 **Choose Withdrawal Method:**", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
-
-    elif data == "w_upi":
         if user['balance'] < 50:
             await query.answer("❌ Minimum withdrawal amount is ₹50!", show_alert=True)
             return
-        
-        amount = user['balance']
-        curr_date = datetime.now().strftime("%d/%m/%y %H:%M")
-        user['history'].append(f"Withdrawal to UPI ({user['upi']}) -Rs.{amount} Completed on {curr_date}")
-        save_user(user_id, user['username'], user['fullname'], user['mobile'], user['gmail'], user['pass'], user['upi'], 0.0, user['history'])
-        
-        try:
-            await context.bot.send_message(
-                chat_id=ADMIN_ID,
-                text=f"🚨 New Withdrawal Request!\n\n👤 User: {user_id}\n💳 UPI: {user['upi']}\n💰 Amount: Rs.{amount}"
-            )
-        except:
-            pass
-        await query.answer("✅ Withdrawal request submitted successfully!", show_alert=True)
-        await show_main_menu(update, context)
-
-    elif data in ["w_bank", "w_gp", "w_amzn"]:
-        await query.answer("⚠️ Method details missing or coming soon!", show_alert=True)
+        context.user_data['state'] = 'WAITING_WITHDRAW_AMOUNT'
+        kb = [[InlineKeyboardButton("🔙 Back", callback_data="back_home")]]
+        await query.message.edit_text("📥 **Withdraw Fund**\n\nKripya apna withdrawal **Amount** enter karein (e.g., 100):", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
 
     elif data == "redeem_gc":
-        await query.answer("🎁 Send your Gift Card code in chat to redeem.", show_alert=True)
+        context.user_data['state'] = 'WAITING_GC_GMAIL'
+        kb = [[InlineKeyboardButton("🔙 Back", callback_data="back_home")]]
+        await query.message.edit_text("🎁 **Google Play Gift Card**\n\nKripya apni **Gmail ID** bhejein jis par gift card code bheja ja sake:", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
 
-    elif data in ["pay_wallet", "recharge", "loan", "partner"]:
-        await query.answer("🛠️ This service is currently active in RW Wallet App.", show_alert=True)
+    elif data == "pay_wallet":
+        await query.answer("🛠️ This service is currently active in the App.", show_alert=True)
 
     elif data == "history":
         history_list = "\n".join([f"• {item}" for item in user['history']]) if user['history'] else "No transactions yet."
@@ -289,7 +330,7 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     users = get_all_users()
     msg = f"📊 **Admin Panel - Total Users: {len(users)}**\n\n"
     for u in users:
-        msg += f"👤 ID: `{u[0]}` | @{u[1]}\n📧 {u[2]} | 💰 Rs.{u[3]}\nCommand: `/addrs {u[0]} 50`\n------------------\n"
+        msg += f"👤 ID: `{u[0]}` | @{u[1]}\n📧 {u[2]} | 💰 Rs.{u[3]}\nCommand: `/addrs {u[0]} 50 AppName`\n------------------\n"
     await update.message.reply_text(msg, parse_mode="Markdown")
 
 # --- FASTAPI APP SETUP ---
@@ -322,7 +363,7 @@ async def process_webhook(request: Request):
 
 @app.get("/")
 async def root():
-    return {"status": "RW Wallet Bot is live via FastAPI Webhook!"}
+    return {"status": "Wallet Bot is live via FastAPI Webhook!"}
 
 if __name__ == "__main__":
     import uvicorn
