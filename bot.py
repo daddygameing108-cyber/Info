@@ -129,16 +129,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(
                 chat_id=ADMIN_ID,
                 text=(
-                    f"👤 **New Wallet Registered!**\n\n"
-                    f"🆔 User ID: `{user_id}`\n"
+                    f"👤 New Wallet Registered!\n\n"
+                    f"🆔 User ID: {user_id}\n"
                     f"🔗 Username: @{username}\n"
                     f"📛 Name: {fullname}\n"
                     f"📱 Mobile: {mobile}\n"
-                    f"📧 Gmail: `{gmail}`\n"
-                    f"💳 UPI: `{upi}`\n\n"
-                    f"💡 *Balance add karne ke liye:* `/addrs {user_id} <amount>`"
-                ),
-                parse_mode="Markdown"
+                    f"📧 Gmail: {gmail}\n"
+                    f"💳 UPI: {upi}\n\n"
+                    f"💡 Balance add karne ke liye: /addrs {user_id} <amount>"
+                )
             )
         except Exception as e:
             logger.error(f"Admin notify error: {e}")
@@ -232,8 +231,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             await context.bot.send_message(
                 chat_id=ADMIN_ID,
-                text=f"🚨 **New Withdrawal Request!**\n\n👤 User: `{user_id}`\n💳 UPI: `{user['upi']}`\n💰 Amount: `Rs.{amount}`",
-                parse_mode="Markdown"
+                text=f"🚨 New Withdrawal Request!\n\n👤 User: {user_id}\n💳 UPI: {user['upi']}\n💰 Amount: Rs.{amount}"
             )
         except:
             pass
